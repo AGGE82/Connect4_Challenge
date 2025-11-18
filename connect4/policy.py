@@ -109,6 +109,9 @@ class MCTS(Policy):
            current_state = current_state.transition(action)
         return self.calc_reward(current_state)
 
-    def backpropagation(self):
-        pass
+    def backpropagation(self, reward, node):
+        while node is not None:
+            node.visitas += 1
+            node.total_rewars += reward
+            node = node.parent
     
