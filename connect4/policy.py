@@ -67,7 +67,7 @@ class MCTS(Policy):
             self.backpropagation()
             
         return best_action
-            
+                
     def selection(self, node):
         while node.is_full_extended() and not node.state.is_final():
             best_child = node.best_child(self.c)
@@ -77,11 +77,17 @@ class MCTS(Policy):
         untried_actions = node.state.get_free_cols()
         action = untried_actions[0]
         untried_actions = untried_actions.remove(action)
-        
+        new_state = node.state.transition(action)
+        child = NodeMCTS(new_state, action, node)
+        node.childs.add(child)
+        return child
     
-    def simulation(self):
-        pass
-    
+    def simulation(self, state):
+        current_state = state.copy()
+        #while not current_state.is_final():
+           # action = random_action(current_state.)
+        return None
+
     def backpropagation(self):
         pass
     
