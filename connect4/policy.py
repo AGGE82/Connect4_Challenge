@@ -67,6 +67,26 @@ class MCTS(Policy):
             self.backpropagation()
             
         return best_action
+    
+    def calc_reward(final_state):
+        winner = final_state.get_winner()
+
+        if winner == current_player: # AYUDA
+            return 1
+        elif winner == opponent:    #AYUDA
+            return -1
+        elif winner == 0 and final_state.is_final():
+            return 0
+        else:
+            return 0
+        
+    def random_action(valid_actions):
+        rng = np.random.default_rng()
+        if len(valid_actions) == 0:
+            return None
+        random_index = int(rng.choice(valid_actions))
+        action = valid_actions[random_index]
+        return action
                 
     def selection(self, node):
         while node.is_full_extended() and not node.state.is_final():
@@ -84,9 +104,10 @@ class MCTS(Policy):
     
     def simulation(self, state):
         current_state = state.copy()
-        #while not current_state.is_final():
-           # action = random_action(current_state.)
-        return None
+        while not current_state.is_final():
+           action = self.random_action(current_state.get_free_cols)
+           current_state = current_state.transition(action)
+        return self.calc_reward(current_state)
 
     def backpropagation(self):
         pass
