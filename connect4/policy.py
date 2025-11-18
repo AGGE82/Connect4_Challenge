@@ -81,7 +81,11 @@ class MCTS(Policy):
     
     def simulation(self):
         pass
-    
-    def backpropagation(self):
-        pass
+
+
+    def backpropagation(self, reward, node):
+        while node is not None:
+            node.visitas += 1
+            node.total_rewars += reward
+            node = node.parent
     
