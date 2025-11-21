@@ -1,4 +1,4 @@
-from connect4.policy import Policy
+from Connect4_Challenge.connect4.policy import Policy
 from connect4.utils import find_importable_classes
 from Connect4_Challenge.tournament import run_tournament, play
 

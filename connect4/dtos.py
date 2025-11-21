@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
-from connect4.policy import Policy
+from Connect4_Challenge.connect4.agent import Policy
 import numpy as np
 
 State = np.ndarray
