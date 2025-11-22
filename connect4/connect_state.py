@@ -1,5 +1,5 @@
 # Abstract
-from connect4.environment_state import EnvironmentState
+from environment_state import EnvironmentState
 
 # Types
 from typing import Any
