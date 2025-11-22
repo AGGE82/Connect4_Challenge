@@ -1,5 +1,5 @@
 import numpy as np
-from connect4.policy import Policy
+from Connect4_Challenge.connect4.policy import Policy
 from typing import override
 
 
