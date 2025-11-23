@@ -75,7 +75,6 @@ class MCTS(Policy):
         else:
             self.qvalues = {}
 
-
     def mount(self):
         if not os.path.exists(self.qfile):
             with open(self.qfile, "w") as f:
@@ -288,7 +287,21 @@ class MCTS(Policy):
         while node is not None:
             node.visits += 1
             node.total_reward += reward
+
+            #Para guardar los q values
+            stateKey = str(node.state.board.tolist())
+
+            if stateKey not in self.qvalues:
+                self.qvalues[stateKey] = {}
+
+            if node.action is not None:
+                q = node.total_reward / node.visits
+                self.qvalues[stateKey][str(node.action)] = q
+
             node = node.parent
+
+        with open(self.qfile, "w") as f:
+            json.dump(self.qvalues, f, indent=2)          
 
 class BoardBuffer:
     def __init__(self, num=8, rows=6, cols=7):
@@ -345,19 +358,4 @@ def get_winner_board(board: np.ndarray) -> int:
         return 1
     if check_win_fast(board, -1):
         return -1
-    return 0
-
-            #Para guardar los q values
-            stateKey = str(node.state.board.tolist())
-
-            if stateKey not in self.qvalues:
-                self.qvalues[stateKey] = {}
-
-            if node.action is not None:
-                q = node.total_reward / node.visits
-                self.qvalues[stateKey][str(node.action)] = q
-
-            node = node.parent
-
-        with open(self.qfile, "w") as f:
-            json.dump(self.qvalues, f, indent=2)    
+    return 0 
