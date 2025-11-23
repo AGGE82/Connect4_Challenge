@@ -1,6 +1,6 @@
 import numpy as np
 import math
-
+import time
 from policy import Policy
 from connect_state import ConnectState
 
@@ -54,8 +54,14 @@ class NodeMCTS():
 
 class MCTS(Policy):
     def __init__(self):
-        self.simulations = 1000
+        self.simulations = 0
         self.c = 1.5
+        self.buffer_pool = self.BoardBufferPool(num_buffers=16, rows=6, cols=7)
+        self.max_rollout_depth = 10
+        self.prune_min_visits = 1
+        self.time_limit = 10
+        self.root = None
+        self.root_player = None
 
     def mount(self):
         pass
@@ -64,6 +70,23 @@ class MCTS(Policy):
         p1 = np.sum(s == 1)
         p2 = np.sum(s == -1)
         return 1 if p1 == p2 else -1
+    
+    def update_root_after_move(self, prev_root: NodeMCTS, action: int, new_state: ConnectState):
+        if prev_root is None:
+            return NodeMCTS(new_state, None)
+        
+        for child in prev_root.children:
+            if child.action == action:
+                child.parent = None
+                child.state = new_state
+                return child
+            
+        return NodeMCTS(new_state, None)
+    
+    def prune_tree(self, node: NodeMCTS):
+        if not node.children:
+            return
+        node.children = [child for child in node.children if child.visits >= self.prune_min_visits]
 
     def act(self, s: np.ndarray) -> int:
         player = self.detect_player(s)
@@ -88,28 +111,36 @@ class MCTS(Policy):
                 return col
 
         self.root_player = player
-        node_root = NodeMCTS(state, None)
-
-        for _ in range(self.simulations):
+        if self.root is None:
+            node_root = NodeMCTS(state, None)
+        else:
+            node_root = self.update_root_after_move(self.root, None, state)
+            if node_root is None:
+                node_root = NodeMCTS(state, None)
+        
+        start = time.time()
+        while time.time() - start < self.time_limit:
             node = self.selection(node_root)
-
             if not node.state.is_final():
                 node = self.expansion(node)
-
             reward = self.simulation(node.state)
             self.backpropagation(reward, node)
+            self.simulations += 1
+
+        self.prune_tree(node_root)
 
         if not node_root.children:
             return np.random.choice(valid_actions)
 
         best_child = max(node_root.children, key=lambda c: c.visits)
+        self.root = self.update_root_after_move(node_root, best_child.action, None)
+        print(f"Total de simulaciones: {self.simulations}, Acción seleccionada: {best_child.action} y número de visitas: {best_child.visits}")
         return best_child.action
 
-    def calc_reward(self, final_state: ConnectState):
-        winner = final_state.get_winner()
-        if winner == self.root_player:
+    def calc_reward(self, winner, player):
+        if winner == player:
             return 1
-        elif winner == -self.root_player:
+        elif winner == player:
             return -1
         return 0
 
@@ -144,13 +175,93 @@ class MCTS(Policy):
         return child
 
     def simulation(self, state: ConnectState):
-        current_state = state
+        board = state.board
+        current_player = state.player
+        pool = self.buffer_pool
+        buffer = pool.get()
+        np.copyto(buffer, board)
 
-        while not current_state.is_final():
-            action = self.random_action(current_state.get_free_cols())
-            current_state = current_state.transition(action)
+        depth = 0
+        while depth < self.max_rollout_depth:
+            winner = get_winner_board(buffer)
+            if winner != 0:
+                return self.calc_reward(winner, self.root_player)
+            free_cols = [col for col in range(buffer.shape[1]) if buffer[0, col] == 0]
+            if not free_cols:
+                return 0
+            
+            for action in free_cols:
+                tmp = pool.get()
+                if transition_fast_board(buffer, action, current_player, tmp):
+                    if check_win_fast(tmp, current_player):
+                        if current_player == self.root_player:
+                            return 1
+                        else:
+                            return -1
+                        
+            action = np.random.default_rng().choice(free_cols)
+            transition_fast_board(buffer, action, current_player, buffer)
+            current_player = -current_player
+            depth += 1
 
-        return self.calc_reward(current_state)
+        score = self.heuristic_board_score(buffer, self.root_player)
+        if score >0:
+            return 0.5
+        elif score < 0:
+            return -0.5
+        else:
+            return 0
+        
+    def heuristic_board_score(self, board: np.ndarray, player: int) -> float:
+        my = 0
+        opp = 0
+        rows, cols = board.shape
+
+        def count_line(line):
+            s_my = 0
+            s_opp = 0
+            for i in range(len(line)-3):
+                window = line[i:i+4]
+                if np.all(window == player):
+                    s_my += 10
+                else:
+                    cnt_my = int(np.sum(window == player))
+                    cnt_opp = int(np.sum(window == -player))
+                    if cnt_my == 3 and cnt_opp ==0:
+                        s_my +=4
+                    elif cnt_my == 2 and cnt_opp == 0:
+                        s_my += 1
+                    if cnt_opp == 3 and cnt_my == 0:
+                        s_opp += 4
+                    elif cnt_opp == 2 and cnt_my == 0:
+                        s_opp += 1
+            return s_my, s_opp
+        
+        for row in range(rows):
+            a, b = count_line(board[row])
+            my += a
+            opp += b
+
+        for col in range(cols):
+            a, b = count_line(board[:, col])
+            my += a
+            opp += b
+
+        for row in range(rows - 3):
+            for col in range(cols - 3):
+                window =  np.array([board[row+i, col+i] for i in range(4)])
+                a, b = count_line(window)
+                my += a
+                opp += b
+        
+        for row in range(3, rows):
+            for col in range(cols - 3):
+                window =  np.array([board[row-i, col+i] for i in range(4)])
+                a, b = count_line(window)
+                my += a
+                opp += b
+
+        return my - opp
 
     def backpropagation(self, reward, node):
         while node is not None:
