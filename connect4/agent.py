@@ -44,7 +44,7 @@ class NodeMCTS():
                     )
                 child._cached_child_visits = child.visits
                 child._cached_parent_visits = parent_visits
-                
+
             child_UCB = child.cached_ucb
             if child_UCB > best_child_UCB:
                 best_child_UCB = child_UCB
@@ -54,7 +54,7 @@ class NodeMCTS():
 
 class MCTS(Policy):
     def __init__(self):
-        self.simulations = 100
+        self.simulations = 1000
         self.c = 1.5
 
     def mount(self):
