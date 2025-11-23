@@ -14,6 +14,9 @@ class NodeMCTS():
         self.children = []
         self.action = action
         self.untried_actions = state.get_free_cols()[:]
+        self.cached_ucb = None
+        self._cached_parent_visits = None
+        self._cached_child_visits = None
 
     def is_full_extended(self):
         return len(self.untried_actions) == 0
@@ -24,7 +27,7 @@ class NodeMCTS():
         return self.total_reward / self.visits
 
     def best_child(self, c):
-        parent_visits = max(self.visits, 1)
+        parent_visits = self.visits if self.visits > 0 else 1
 
         unvisited = [child for child in self.children if child.visits == 0]
         if unvisited:
@@ -34,16 +37,20 @@ class NodeMCTS():
         best_child_UCB = -float('inf')
 
         for child in self.children:
-            child_UCB = (
-                child.q_estimate()
-                + c * math.sqrt(math.log(parent_visits) / child.visits)
-            )
+            if (child._cached_child_visits != child.visits or child._cached_parent_visits != parent_visits or child.cached_ucb is None):
+                child.cached_ucb = (
+                    child.q_estimate()
+                    + c * math.sqrt(math.log(parent_visits) / child.visits)
+                    )
+                child._cached_child_visits = child.visits
+                child._cached_parent_visits = parent_visits
+                
+            child_UCB = child.cached_ucb
             if child_UCB > best_child_UCB:
                 best_child_UCB = child_UCB
                 best_child = child
 
         return best_child
-
 
 class MCTS(Policy):
     def __init__(self):
@@ -150,3 +157,60 @@ class MCTS(Policy):
             node.visits += 1
             node.total_reward += reward
             node = node.parent
+
+class BoardBuffer:
+    def __init__(self, num=8, rows=6, cols=7):
+        self.buffers = [np.zeros((rows, cols), dtype=int) for _ in range(num)]
+        self.index = 0
+        self.num = num
+
+    def get(self):
+        buffer = self.buffers[self.index]
+        self.index = (self.index + 1) % self.num
+        return buffer
+
+def get_empty_board_buffer():
+    return np.zeros((6, 7), dtype=int)
+
+def transition_fast_board(board: np.ndarray, action: int, player: int, buffer: np.ndarray):
+    np.copyto(buffer, board)
+    col = buffer[:, action]
+    for row in range(len(col)-1, -1, -1):
+        if col[row] == 0:
+            buffer[row, action] = player
+            return True
+    return False
+
+def check_win_fast(board:np.ndarray, player:int) -> bool:
+    rows, cols = board.shape
+
+    for r in range(rows):
+        row = board[r]
+        for col in range(cols-3):
+            if row[col] == player and row[col+1] == player and row[col+2] == player and row[col+3] ==player:
+                return True
+            
+    for c in range(cols):
+        col= board[:, c]
+        for row in range(rows-3):
+            if col[row] == player and col[row+1] == player and col[row+2] == player and col[row+3] == player:
+                return True
+            
+    for row in range(rows-3):
+        for col in range(cols-3):
+            if (board[row, col] == player and board[row+1, col+1] == player and board[row+2, col+2] == player and board[row+3, col+3] == player):
+                return True
+
+    for row in range(3, rows):
+        for col in range(cols-3):
+            if (board[row, col] == player and board[row-1, col+1] == player and board[row-2, col+2] == player and board[row-3, col+3] == player):
+                return True
+
+    return False
+
+def get_winner_board(board: np.ndarray) -> int:
+    if check_win_fast(board, 1):
+        return 1
+    if check_win_fast(board, -1):
+        return -1
+    return 0
