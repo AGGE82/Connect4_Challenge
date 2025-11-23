@@ -56,8 +56,6 @@ class NodeMCTS():
         return best_child
 
 class MCTS(Policy):
-    qvalues = {}
-
     def __init__(self):
         self.simulations = 0
         self.c = 1.5
@@ -74,7 +72,16 @@ class MCTS(Policy):
                     self.qvalues = json.load(f)
         else:
             self.qvalues = {}
-
+    
+    def get_state_key(self, state: ConnectState):
+        return state.board.tobytes()
+    
+    def get_prior_q(self, state: ConnectState, action):
+        key = self.get_state_key(state)
+        if key not in self.qvalues:
+            return 0.0
+        return self.qvalues[key].get(action, 0.0)
+    
     def mount(self):
         if not os.path.exists(self.qfile):
             with open(self.qfile, "w") as f:
@@ -113,8 +120,7 @@ class MCTS(Policy):
         if stateKey in self.qvalues:
             maxQ = max(self.qvalues[stateKey], key=self.qvalues[stateKey].get)
             return int(maxQ)
-
-
+        
         valid_actions = state.get_free_cols()
         if not valid_actions:
             return 0
