@@ -10,6 +10,8 @@ from connect_state import ConnectState
 
 class NodeMCTS():
     def __init__(self, state: ConnectState, action, parent=None):
+        if state is None:
+            raise ValueError("NodeMCTS requires a ConnectState 'state' (no None).")
         self.state = state
         self.visits = 0
         self.total_reward = 0
@@ -20,13 +22,14 @@ class NodeMCTS():
         self.cached_ucb = None
         self._cached_parent_visits = None
         self._cached_child_visits = None
+        self.q_prior = 0
 
     def is_full_extended(self):
         return len(self.untried_actions) == 0
 
     def q_estimate(self):
         if self.visits == 0:
-            return 0
+            return self.q_prior
         return self.total_reward / self.visits
 
     def best_child(self, c):
@@ -40,11 +43,14 @@ class NodeMCTS():
         best_child_UCB = -float('inf')
 
         for child in self.children:
-            if (child._cached_child_visits != child.visits or child._cached_parent_visits != parent_visits or child.cached_ucb is None):
-                child.cached_ucb = (
-                    child.q_estimate()
-                    + c * math.sqrt(math.log(parent_visits) / child.visits)
-                    )
+            if (child._cached_child_visits != child.visits or
+                child._cached_parent_visits != parent_visits or
+                child.cached_ucb is None):
+
+                denom = child.visits if child.visits > 0 else 1.0
+                ucb = child.q_estimate() + c * math.sqrt(math.log(parent_visits) / denom)
+
+                child.cached_ucb = ucb
                 child._cached_child_visits = child.visits
                 child._cached_parent_visits = parent_visits
 
@@ -55,27 +61,32 @@ class NodeMCTS():
 
         return best_child
 
-class MCTS(Policy):
+class Bradwurst(Policy):
     qvalues = {}
 
     def __init__(self):
         self.simulations = 0
         self.c = 1.5
         self.buffer_pool = self.BoardBufferPool(num_buffers=16, rows=6, cols=7)
-        self.max_rollout_depth = 10
+        self.max_rollout_depth = 6
         self.prune_min_visits = 1
-        self.time_limit = 10
+        self.time_limit = 8
         self.root = None
         self.root_player = None
         self.qfile = os.path.join(os.path.dirname(__file__), "qvalues.json")
 
         if os.path.exists(self.qfile):
+            try:
                 with open(self.qfile, "r") as f:
                     self.qvalues = json.load(f)
+            except Exception:
+                self.qvalues = {}
         else:
             self.qvalues = {}
 
-    def mount(self):
+    def mount(self, timeout=None):
+        self.time_limit = timeout if timeout is not None else self.time_limit
+
         if not os.path.exists(self.qfile):
             with open(self.qfile, "w") as f:
                 json.dump({}, f)
@@ -87,14 +98,34 @@ class MCTS(Policy):
     
     def update_root_after_move(self, prev_root: NodeMCTS, action: int, new_state: ConnectState):
         if prev_root is None:
+            if new_state is None:
+                raise ValueError("update_root_after_move called with prev_root=None y new_state=None")
             return NodeMCTS(new_state, None)
-        
+
+        if new_state is None and action is not None:
+            try:
+                candidate = prev_root.state.transition(action)
+                new_state = candidate
+            except Exception:
+                new_state = None
+
         for child in prev_root.children:
             if child.action == action:
                 child.parent = None
-                child.state = new_state
+                if new_state is not None:
+                    child.state = new_state
+                    child.untried_actions = new_state.get_free_cols()[:]
                 return child
-            
+
+        if new_state is None:
+            if action is not None:
+                try:
+                    new_state = prev_root.state.transition(action)
+                except Exception:
+                    new_state = prev_root.state
+            else:
+                new_state = prev_root.state
+
         return NodeMCTS(new_state, None)
     
     def prune_tree(self, node: NodeMCTS):
@@ -105,62 +136,52 @@ class MCTS(Policy):
     def act(self, s: np.ndarray) -> int:
         player = self.detect_player(s)
         state = ConnectState(s.copy(), player)
-        stateKey = str(state.board.tolist())
 
         if state.is_final():
             return 0
-
-        if stateKey in self.qvalues:
-            maxQ = max(self.qvalues[stateKey], key=self.qvalues[stateKey].get)
-            return int(maxQ)
-
 
         valid_actions = state.get_free_cols()
         if not valid_actions:
             return 0
 
         for col in valid_actions:
-            next_s = state.transition(col)
-            if next_s.get_winner() == player:
+            if state.transition(col).get_winner() == player:
                 return col
 
-        opp = -player
         for col in valid_actions:
-            opp_state = ConnectState(state.board.copy(), opp).transition(col)
-            if opp_state.get_winner() == opp:
+            if state.transition(col).get_winner() == -player:
                 return col
 
-        self.root_player = player
         if self.root is None:
             node_root = NodeMCTS(state, None)
         else:
             node_root = self.update_root_after_move(self.root, None, state)
-            if node_root is None:
-                node_root = NodeMCTS(state, None)
+        self.root_player = player
+
+        self.simulations = 0
+        MAX_SIMULATIONS = 20
         
-        start = time.time()
-        while time.time() - start < self.time_limit:
+        for _ in range(MAX_SIMULATIONS):
             node = self.selection(node_root)
-            if not node.state.is_final():
-                node = self.expansion(node)
+            node = self.expansion(node)
             reward = self.simulation(node.state)
             self.backpropagation(reward, node)
             self.simulations += 1
 
-        self.prune_tree(node_root)
-
         if not node_root.children:
-            return np.random.choice(valid_actions)
+            return int(np.random.choice(valid_actions))
 
         best_child = max(node_root.children, key=lambda c: c.visits)
-        self.root = self.update_root_after_move(node_root, best_child.action, None)
-        print(f"Total de simulaciones: {self.simulations}, Acción seleccionada: {best_child.action} y número de visitas: {best_child.visits}")
-        return best_child.action
 
+        new_state = node_root.state.transition(best_child.action)
+        self.root = self.update_root_after_move(node_root, best_child.action, new_state)
+
+        return best_child.action
+    
     def calc_reward(self, winner, player):
         if winner == player:
             return 1
-        elif winner == player:
+        elif winner == -player:
             return -1
         return 0
 
@@ -180,18 +201,35 @@ class MCTS(Policy):
         return node
 
     def expansion(self, node):
+        if node.state.is_final():
+            return node
+
+        valid_actions = node.state.get_free_cols()
+        if not valid_actions:
+            node.untried_actions = []
+            return node
+
+        node.untried_actions = [a for a in node.untried_actions if a in valid_actions]
+
         if not node.untried_actions:
             return node
 
-        action = node.untried_actions.pop()
-
-        if action not in node.state.get_free_cols():
-            return node
+        action = int(np.random.choice(node.untried_actions))
+        try:
+            node.untried_actions.remove(action)
+        except ValueError:
+            pass
 
         new_state = node.state.transition(action)
         child = NodeMCTS(new_state, action, node)
-        node.children.append(child)
 
+        stateKey = str(node.state.board.tolist())
+        if stateKey in self.qvalues and str(action) in self.qvalues[stateKey]:
+            child.q_prior = self.qvalues[stateKey][str(action)]
+        else:
+            child.q_prior = 0
+
+        node.children.append(child)
         return child
 
     def simulation(self, state: ConnectState):
@@ -209,7 +247,7 @@ class MCTS(Policy):
             free_cols = [col for col in range(buffer.shape[1]) if buffer[0, col] == 0]
             if not free_cols:
                 return 0
-            
+
             for action in free_cols:
                 tmp = pool.get()
                 if transition_fast_board(buffer, action, current_player, tmp):
@@ -218,14 +256,14 @@ class MCTS(Policy):
                             return 1
                         else:
                             return -1
-                        
+
             action = np.random.default_rng().choice(free_cols)
             transition_fast_board(buffer, action, current_player, buffer)
             current_player = -current_player
             depth += 1
 
         score = self.heuristic_board_score(buffer, self.root_player)
-        if score >0:
+        if score > 0:
             return 0.5
         elif score < 0:
             return -0.5
